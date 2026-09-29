@@ -13,6 +13,7 @@ import (
 	"github.com/wyw14/solo-039/internal/reboiler"
 	"github.com/wyw14/solo-039/internal/reflux"
 	"github.com/wyw14/solo-039/internal/relief"
+	"github.com/wyw14/solo-039/internal/sandbox"
 	"github.com/wyw14/solo-039/internal/utility"
 )
 
@@ -123,6 +124,16 @@ func (p *Plant) OperationalAudit() map[string]any {
 	routePermit := interlock.RoutePermit(p.Interlock, proofs, current)
 	restoredPermit := interlock.RestorePermit(p.Interlock, interlock.RecoveryState{Campaign: current, Lease: snapshot.Reflux.Lease, Proofs: proofs})
 	recoverySafe := interlock.RecoverySafe(p.Interlock, interlock.RecoveryState{Campaign: current, Lease: snapshot.Reflux.Lease, Proofs: proofs})
+
+	activeRule := p.Rules.Book().Current(current.Grade)
+	historicalRule := p.Rules.Book().VersionAt(current.Grade, 1)
+	ruleDrafts := p.Rules.Drafts()
+	openRuleDrafts := 0
+	for _, draft := range ruleDrafts {
+		if draft.Status == sandbox.StatusDraft {
+			openRuleDrafts++
+		}
+	}
 
 	events := p.Journal.Events()
 	sequenceErr := journal.ValidateSequence(events)
@@ -308,6 +319,7 @@ func (p *Plant) OperationalAudit() map[string]any {
 		"column":    map[string]any{"apply_error": auditError(columnApplyErr), "ready": columnReady, "snapshot_valid": columnSnapshotValid, "stable": columnStable, "heat_permit": columnHeatPermit, "recovery_ready": columnRecoveryReady, "profile_count": p.Profile.Count()},
 		"feed":      map[string]any{"switch_error": auditError(feedSwitchErr), "proof_error": auditError(feedProofErr), "proof_safe": feedProof.Safe(), "built_proof_safe": feedBuiltProof.Safe(), "route_isolated": feedCoordinator.Current.Isolated(), "route_event": feedRouteEvent.ID, "open_error": auditError(feedOpenErr), "active": feedActive, "revision": feedStateRevision, "close_error": auditError(feedCloseErr), "metrics": feedMetricSnapshot},
 		"interlock": map[string]any{"explanation": explanation, "sources": evidenceSources, "same_source": sameSource, "heat": heatPermit.Allowed, "route": routePermit, "restored": restoredPermit.Allowed, "recovery_safe": recoverySafe},
+		"rules":     map[string]any{"active_number": activeRule.Number, "active_is_builtin": activeRule.Number == sandbox.BuiltinNumber, "historical_number": historicalRule.Number, "drafts_total": len(ruleDrafts), "open_drafts": openRuleDrafts, "default_matches_coordinator": interlock.DefaultRule().Equal(p.Interlock.Rule)},
 		"journal":   map[string]any{"sequence_error": auditError(sequenceErr), "latest": latestEventPresent, "checkpoint_valid": checkpointValid, "file_path": p.FileLog.Path(), "file_events": len(fileEvents), "file_error": auditError(fileReadErr), "durable_proof": durableProofPresent, "proof_error": auditError(durableProofErr), "recovery_error": auditError(recoveryValidationErr), "recovery_events": len(recoveryEvents), "replay_events": len(replayEvents), "campaign_events": replayedForCampaign, "state_ready": recoveredState.Ready(), "plan_complete": recoveryPlan.Complete(), "generations": len(eventGenerations), "loaded_campaign": loadedSnapshot.Campaign.ID, "load_error": auditError(snapshotLoadErr), "failure_probe_rejected": journalProbeErr != nil},
 		"model":     map[string]any{"plan_error": auditError(planErr), "command_error": auditError(commandErr), "command_key": command.Key(), "ack_matches": ackMatches, "ack_error": auditError(ackErr), "column_limit_error": auditError(columnLimitErr), "energy_limit_error": auditError(energyLimitErr), "safe": limitSafe},
 		"product":   map[string]any{"publish_error": auditError(productPublishErr), "recover_error": auditError(productRecoverErr), "route_error": auditError(productRouteErr), "closed_for_revision": productClose, "transition_error": auditError(productTransitionErr), "durable": productDurable, "routed": productRouted, "recovery_error": auditError(productRecoveryErr), "restore_error": auditError(productRestoreErr), "latest": productLatest, "latest_error": auditError(productLatestErr), "revision_decisions": len(productByRevision), "state_present": productStatePresent, "state_targets": productStateTargets},

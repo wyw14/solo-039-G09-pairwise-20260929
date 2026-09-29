@@ -6,9 +6,10 @@ import (
 )
 
 type Permit struct {
-	Allowed  bool
-	Reasons  []string
-	Evidence []model.Proof
+	Allowed     bool
+	Reasons     []string
+	Evidence    []model.Proof
+	RuleVersion int
 }
 
 func (p Permit) Error() error {

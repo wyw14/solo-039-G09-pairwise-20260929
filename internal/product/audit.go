@@ -8,11 +8,12 @@ import (
 )
 
 type Decision struct {
-	Plan   model.ProductPlan
-	Proof  model.Proof
-	Opened bool
-	At     time.Time
-	Reason string
+	Plan        model.ProductPlan
+	Proof       model.Proof
+	Opened      bool
+	At          time.Time
+	Reason      string
+	RuleVersion int
 }
 
 type Audit struct {
@@ -22,9 +23,9 @@ type Audit struct {
 
 func NewAudit() *Audit { return &Audit{decisions: make([]Decision, 0, 32)} }
 
-func (a *Audit) Record(plan model.ProductPlan, proof model.Proof, opened bool, reason string) {
+func (a *Audit) Record(plan model.ProductPlan, proof model.Proof, opened bool, reason string, ruleVersion int) {
 	a.mu.Lock()
-	a.decisions = append(a.decisions, Decision{Plan: plan, Proof: proof, Opened: opened, At: time.Now(), Reason: reason})
+	a.decisions = append(a.decisions, Decision{Plan: plan, Proof: proof, Opened: opened, At: time.Now(), Reason: reason, RuleVersion: ruleVersion})
 	a.mu.Unlock()
 }
 

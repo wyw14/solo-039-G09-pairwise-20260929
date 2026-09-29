@@ -16,6 +16,7 @@ import (
 	"github.com/wyw14/solo-039/internal/reboiler"
 	"github.com/wyw14/solo-039/internal/reflux"
 	"github.com/wyw14/solo-039/internal/relief"
+	"github.com/wyw14/solo-039/internal/sandbox"
 	"github.com/wyw14/solo-039/internal/utility"
 	"path/filepath"
 	"sync"
@@ -52,6 +53,8 @@ type Plant struct {
 	Evidence          *analyzer.EvidenceCatalog
 	ReliefHistory     *relief.History
 	Incidents         *Incidents
+	Rules             *sandbox.Box
+	rulesStore        *sandbox.Store
 	started           bool
 	lastError         string
 }
@@ -61,6 +64,7 @@ func NewPlant(dataDir string) *Plant {
 	analyzerState := analyzer.New()
 	store := journal.New()
 	refluxCoordinator := reflux.NewCoordinator(1)
+	rulesStore := sandbox.NewStore(filepath.Join(dataDir, "rules.json"))
 	plant := &Plant{
 		Campaign:          campaignState,
 		Column:            column.New("T-101"),
@@ -90,6 +94,8 @@ func NewPlant(dataDir string) *Plant {
 		Evidence:          analyzer.NewEvidenceCatalog(),
 		ReliefHistory:     relief.NewHistory(),
 		Incidents:         NewIncidents(),
+		Rules:             sandbox.NewBox(rulesStore),
+		rulesStore:        rulesStore,
 	}
 	plant.Reflux.Register("T-101", plant.RefluxState)
 	plant.Feed.Observe = plant.observeFeed
@@ -191,7 +197,10 @@ func (p *Plant) RouteProduct(target string) error {
 	}
 	_ = p.Evidence.Add(proof)
 	pressureProof := model.Proof{ID: uuid.New(), Revision: current.Revision, Source: "column-pressure", Digest: fmt.Sprintf("%.3f", p.Column.Snapshot().Pressure), Durable: true, Independent: true, At: time.Now().Unix()}
-	permit := p.Interlock.Evaluate([]model.Proof{proof, pressureProof}, model.Campaign{ID: current.ID, Revision: current.Revision, Phase: model.OnSpec, Epoch: current.Epoch, Fencing: current.Fencing})
+	_ = p.Evidence.Add(pressureProof)
+	ruleVersion := p.Rules.Book().Current(current.Grade)
+	permit := ruleVersion.Rule.Evaluate([]model.Proof{proof, pressureProof}, model.Campaign{ID: current.ID, Revision: current.Revision, Phase: model.OnSpec, Epoch: current.Epoch, Fencing: current.Fencing})
+	permit.RuleVersion = ruleVersion.Number
 	if err := permit.Error(); err != nil {
 		return err
 	}
@@ -199,11 +208,11 @@ func (p *Plant) RouteProduct(target string) error {
 	campaign.Restore(p.Campaign, current)
 	plan := model.ProductPlan{Campaign: current.ID, Revision: current.Revision, Grade: current.Grade, Target: target}
 	if err := p.Product.PublishWithProof(plan, proof); err != nil {
-		p.ProductAudit.Record(plan, proof, false, err.Error())
+		p.ProductAudit.Record(plan, proof, false, err.Error(), ruleVersion.Number)
 		p.fail(err)
 		return err
 	}
-	p.ProductAudit.Record(plan, proof, true, "durable proof accepted")
+	p.ProductAudit.Record(plan, proof, true, "durable proof accepted", ruleVersion.Number)
 	return p.record("product.routed", target)
 }
 
@@ -250,6 +259,9 @@ func (p *Plant) Snapshot() model.Snapshot {
 func (p *Plant) Save() error { return p.Snapshots.Save(p.Snapshot()) }
 
 func (p *Plant) Restore() error {
+	if err := p.Rules.Load(); err != nil {
+		return err
+	}
 	snapshot, err := p.Snapshots.Load()
 	if err != nil {
 		return err

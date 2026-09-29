@@ -58,3 +58,10 @@ func (h *History) Phases() []model.Phase {
 }
 
 func (h *History) Count() int { h.mu.Lock(); defer h.mu.Unlock(); return len(h.changes) }
+
+// Changes returns a locked copy of every recorded change, in order.
+func (h *History) Changes() []Change {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return append([]Change(nil), h.changes...)
+}
