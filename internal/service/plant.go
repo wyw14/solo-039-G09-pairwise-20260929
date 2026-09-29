@@ -52,6 +52,11 @@ type Plant struct {
 	Evidence          *analyzer.EvidenceCatalog
 	ReliefHistory     *relief.History
 	Incidents         *Incidents
+	RuleBook          *interlock.RuleBook
+	RuleEngine        *interlock.RuleEngine
+	RuleDrafts        *interlock.DraftStore
+	RuleJudge         *interlock.OnlineJudge
+	DecisionLog       *interlock.DecisionLog
 	started           bool
 	lastError         string
 }
@@ -61,6 +66,10 @@ func NewPlant(dataDir string) *Plant {
 	analyzerState := analyzer.New()
 	store := journal.New()
 	refluxCoordinator := reflux.NewCoordinator(1)
+	ruleBook := interlock.NewRuleBook()
+	_ = ruleBook.Seed(ruleBook.Bootstrap(time.Now()))
+	ruleEngine := interlock.NewRuleEngine()
+	decisionLog := interlock.NewDecisionLog()
 	plant := &Plant{
 		Campaign:          campaignState,
 		Column:            column.New("T-101"),
@@ -90,7 +99,13 @@ func NewPlant(dataDir string) *Plant {
 		Evidence:          analyzer.NewEvidenceCatalog(),
 		ReliefHistory:     relief.NewHistory(),
 		Incidents:         NewIncidents(),
+		RuleBook:          ruleBook,
+		RuleEngine:        ruleEngine,
+		RuleDrafts:        interlock.NewDraftStore(ruleBook, ruleEngine),
+		DecisionLog:       decisionLog,
 	}
+	plant.RuleJudge = interlock.NewOnlineJudge(ruleBook, ruleEngine, decisionLog)
+	plant.Interlock.BindRuleBook(ruleBook)
 	plant.Reflux.Register("T-101", plant.RefluxState)
 	plant.Feed.Observe = plant.observeFeed
 	return plant
@@ -191,9 +206,12 @@ func (p *Plant) RouteProduct(target string) error {
 	}
 	_ = p.Evidence.Add(proof)
 	pressureProof := model.Proof{ID: uuid.New(), Revision: current.Revision, Source: "column-pressure", Digest: fmt.Sprintf("%.3f", p.Column.Snapshot().Pressure), Durable: true, Independent: true, At: time.Now().Unix()}
-	permit := p.Interlock.Evaluate([]model.Proof{proof, pressureProof}, model.Campaign{ID: current.ID, Revision: current.Revision, Phase: model.OnSpec, Epoch: current.Epoch, Fencing: current.Fencing})
-	if err := permit.Error(); err != nil {
-		return err
+	permitProofs := []model.Proof{proof, pressureProof}
+	permitCampaign := model.Campaign{ID: current.ID, Revision: current.Revision, Grade: current.Grade, Phase: model.OnSpec, Epoch: current.Epoch, Fencing: current.Fencing}
+	// 判定结果（含被拒绝的情形）已在 RuleJudge 内部按版本留痕，
+	// 这里只关心是否放行；许可通过后才执行实际路由。
+	if _, _, permitErr := p.RuleJudge.Decide("route-product", interlock.DecisionInput{Proofs: permitProofs, Campaign: permitCampaign}); permitErr != nil {
+		return permitErr
 	}
 	current.Phase = model.OnSpec
 	campaign.Restore(p.Campaign, current)

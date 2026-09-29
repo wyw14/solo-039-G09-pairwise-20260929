@@ -1,6 +1,10 @@
 package api
 
-import "net/http"
+import (
+	"net/http"
+
+	"github.com/go-chi/chi/v5"
+)
 
 func (s *Server) routes() {
 	s.router.MethodNotAllowed(methodNotAllowed)
@@ -21,6 +25,21 @@ func (s *Server) routes() {
 	s.router.Get("/api/recovery", s.recovery)
 	s.router.Get("/api/profile", s.profile)
 	s.router.Get("/api/metrics", s.metrics)
+	s.router.Route("/api/interlock/rules", func(r chi.Router) {
+		r.Get("/", s.listRuleVersions)
+	})
+	s.router.Route("/api/interlock/decisions", func(r chi.Router) {
+		r.Get("/", s.listInterlockDecisions)
+		r.Get("/{id}/explain", s.explainInterlockDecision)
+	})
+	s.router.Route("/api/interlock/drafts", func(r chi.Router) {
+		r.Get("/", s.listRuleDrafts)
+		r.Post("/", s.createRuleDraft)
+		r.Get("/{id}", s.getRuleDraft)
+		r.Post("/{id}/replay", s.replayRuleDraft)
+		r.Post("/{id}/approve", s.approveRuleDraft)
+		r.Post("/{id}/reject", s.rejectRuleDraft)
+	})
 }
 
 func (s *Server) interlocks(w http.ResponseWriter, r *http.Request) {
